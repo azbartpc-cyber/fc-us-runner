@@ -27,4 +27,7 @@ jobs:
           OC_REGION: us
           OC_AUTH: oidc
           OC_BASE_URL: https://opencookies.com
+          FC_REGION: us
+          FC_AUTH: oidc
+          FC_BASE_URL: https://f-cookies.org
         run: timeout 1800 node runner.mjs || true
