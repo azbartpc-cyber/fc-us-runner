@@ -490,6 +490,8 @@ function classifyRejectKind({ clicked = false, inSettings = false, available = f
 function collectionWaitMs(value) {
   return Math.max(6e3, Math.min(Number.isFinite(Number(value)) ? Number(value) : 7e3, 15e3));
 }
+var arr0 = (v) => Array.isArray(v) ? v : [];
+var noiseButton = (t) => /^\d+$/.test(String(t).trim()) || /certifi|powered by|propuls[eé] par|lire la politique|politique de (confidentialit|cookies)|privacy policy|cookie policy|en savoir plus sur/i.test(String(t));
 var bounded = (promise, ms, fallback = null) => Promise.race([promise, new Promise((resolve2) => setTimeout(() => resolve2(fallback), ms))]);
 var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
 var ordinaryUserAgent = (version) => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${String(version || "130.0.0.0")} Safari/537.36`;
@@ -748,7 +750,7 @@ async function collect(browser, url, opts = {}) {
     }
     return { clicked: false, available };
   };
-  let bannerPresent = false, tcf = false, blocked = false;
+  let bannerPresent = false, tcf = false, blocked = false, refusPre = [];
   let reject = { layer: null, kind: "absent", clicked: false, alternative: null };
   try {
     let page = await makePage();
@@ -768,11 +770,12 @@ async function collect(browser, url, opts = {}) {
     }
     const initial = first.data?._inspection.buttons || [];
     const publicButtons = [];
-    for (const b of initial) publicButtons.push({ text: b.text, kind: b.kind || classifyButton(b.text), layer: 1, w: b.w, h: b.h, fontSize: b.fontSize, bg: b.bg, color: b.color });
+    for (const b of initial.filter((x) => (x.kind || classifyButton(x.text)) !== "other" || !noiseButton(x.text))) publicButtons.push({ text: b.text, kind: b.kind || classifyButton(b.text), layer: 1, w: b.w, h: b.h, fontSize: b.fontSize, bg: b.bg, color: b.color });
     await page.close().catch(() => {
     });
     page = await makePage();
     const refusal = await visit(page, url, "refus");
+    refusPre = arr0(refusal.data?.cookies).map((x) => ({ name: x.name, domain: x.domain }));
     const direct = refusal.data ? await clickChoice(page, "reject") : { clicked: false, available: false };
     reject = { layer: direct.clicked ? 1 : null, kind: classifyRejectKind(direct), clicked: direct.clicked, alternative: null };
     if (!direct.clicked) {
@@ -841,7 +844,7 @@ async function collect(browser, url, opts = {}) {
     consentMode.defaultDenied = typeof consentMode.gcs.avant === "string" ? /^G1[0-3]{2}$/.test(consentMode.gcs.avant) ? /0/.test(consentMode.gcs.avant.slice(2)) : /(^|,)(?:ad_storage|analytics_storage)=(?:denied|0)(?=,|$)/.test(consentMode.gcs.avant) : null;
     consentMode.updateOnChoice = consentMode.gcs.refus !== null || consentMode.gcs.acceptation !== null ? consentMode.gcs.refus !== consentMode.gcs.avant || consentMode.gcs.acceptation !== consentMode.gcs.avant : null;
     for (const s of Object.values(states)) if (s?._inspection) delete s._inspection;
-    return { url, domain: new URL(url).hostname, locale: "fr-FR", bannerPresent, blocked, tcf, vendors, buttons: publicButtons, reject, states, refusNav, bannerBackAfterReload, consentMode, notes, limits };
+    return { url, domain: new URL(url).hostname, locale: "fr-FR", bannerPresent, blocked, refusPre, tcf, vendors, buttons: publicButtons, reject, states, refusNav, bannerBackAfterReload, consentMode, notes, limits };
   } catch {
     limits.push("collecte: \xE9tape interrompue");
     return { url, domain: (() => {
@@ -868,9 +871,24 @@ var COOKIES = {
   __cf_bm: { cls: "exempt", reason: "technique", platform: "Cloudflare" },
   cookieconsent_status: { cls: "exempt", reason: "choix", platform: "" }
 };
+var PREFIXES = [
+  [/^_pk_(id|ses|ref|cvar|hsr|testcookie)/i, { cls: "analytics", reason: "suivi", platform: "Matomo" }],
+  [/^mtm_/i, { cls: "analytics", reason: "suivi", platform: "Matomo" }],
+  [/^_clck|^_clsk|^CLID$/i, { cls: "analytics", reason: "suivi", platform: "Microsoft Clarity" }],
+  [/^_uet(sid|vid)/i, { cls: "marketing", reason: "suivi", platform: "Microsoft Advertising" }],
+  [/^_tt(p|_)/i, { cls: "marketing", reason: "suivi", platform: "TikTok" }],
+  [/^__hs(tc|sc|srf)|^hubspotutk/i, { cls: "analytics", reason: "suivi", platform: "HubSpot" }],
+  [/^(li_fat_id|bcookie|lidc|UserMatchHistory|_li_)/i, { cls: "marketing", reason: "suivi", platform: "LinkedIn" }],
+  [/^(_pin_unauth|_pinterest_)/i, { cls: "marketing", reason: "suivi", platform: "Pinterest" }],
+  [/^(_scid|sc_at)/i, { cls: "marketing", reason: "suivi", platform: "Snapchat" }],
+  [/^(__gads|__gpi|_gcl_|_gac_)/i, { cls: "marketing", reason: "suivi", platform: "Google Ads" }],
+  [/^(ajs_|amp_)/i, { cls: "analytics", reason: "suivi", platform: "Segment / Amplitude" }],
+  [/^(_ga_|_gat_)/i, { cls: "analytics", reason: "suivi", platform: "Google Analytics" }]
+];
 function classifyCookie(cookie) {
   const known = COOKIES[cookie.name];
   if (known) return known;
+  for (const [re, value] of PREFIXES) if (re.test(cookie.name || "")) return value;
   if (/^(?:_ga|_gid|_fbp|_gcl|_hj|mp_|amplitude)/i.test(cookie.name || "")) return { cls: "identifier", reason: "\xE0-examiner", platform: "" };
   return { cls: "unknown", reason: "non-list\xE9", platform: "" };
 }
@@ -992,28 +1010,43 @@ function buildReport(collecte = {}, meta = {}) {
   const buttons = arr(collecte.buttons);
   const acceptButton = buttons.find((b) => b.kind === "accept"), rejectButton = buttons.find((b) => b.kind === "reject");
   const similar = acceptButton && rejectButton && Math.abs(Number(acceptButton.w || 0) - Number(rejectButton.w || 0)) <= Math.max(24, Number(acceptButton.w || 0) * 0.35) && Math.abs(Number(acceptButton.h || 0) - Number(rejectButton.h || 0)) <= 12;
+  const preClick = new Set([...arr(collecte.refusPre), ...arr(states.avant?.cookies)].map((c) => String(c.name)));
+  const cKey = (c) => String(c.name);
+  const dedupe = (list2, key) => {
+    const seen = /* @__PURE__ */ new Set();
+    return list2.filter((x) => {
+      const k = key(x);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+  const afterCookies = dedupe([...arr(states.refus?.cookies), ...arr(collecte.refusNav?.cookies)], cKey);
   const refusalState = refused ? {
     ...refused,
-    cookies: [...arr(states.refus?.cookies), ...arr(collecte.refusNav?.cookies)],
-    requests: [...arr(states.refus?.requests), ...arr(collecte.refusNav?.requests)]
+    cookies: afterCookies.filter((c) => !preClick.has(cKey(c))),
+    requests: dedupe([...arr(states.refus?.requests), ...arr(collecte.refusNav?.requests)], (r) => `${r.host}${r.path}`)
   } : null;
-  const refusalEvidence = evidence(observations(refusalState));
+  const retainedState = refused ? observations({ ...refused, cookies: afterCookies.filter((c) => preClick.has(cKey(c))), requests: [] }) : null;
+  const retained = retainedState ? retainedState.cookies.filter(isTrackCookie).map((c) => `Cookie ${c.name} (${c.cls}) pos\xE9 avant le clic, rest\xE9 en place apr\xE8s le refus`) : [];
+  const refusalObs = observations(refusalState);
+  const refusalEvidence = evidence(refusalObs);
   const consent = collecte.consentMode || {};
   const gcs = consent.gcs || {};
   const hasGoogle = [before, refused, accepted].some((o) => o?.trackers.some((t) => t.entity === "Google" || t.entity.startsWith("Google ")));
-  const longCookies = [states.avant, states.refus, states.acceptation].flatMap((o) => arr(o?.cookies).filter((c) => isTrackCookie(classifyCookie(c)) && Number(c.durationDays ?? c.days) > 395).map((c) => `${c.name} : ${Math.trunc(Number(c.durationDays ?? c.days))} jours`) || []);
+  const longCookies = [...new Set([states.avant, states.refus, states.acceptation].flatMap((o) => arr(o?.cookies).filter((c) => isTrackCookie(classifyCookie(c)) && Number(c.durationDays ?? c.days) > 395).map((c) => `${c.name} : ${Math.trunc(Number(c.durationDays ?? c.days))} jours`) || []))];
   const checks = [
-    check(0, !before ? "verifier" : banner ? "ok" : "verifier", !before ? "\xC9tat avant choix non disponible : pr\xE9sence du bandeau \xE0 v\xE9rifier." : banner ? `Bandeau reconnu${collecte.vendors?.length ? ` (${collecte.vendors.join(", ")})` : ""}.` : collecte.blocked ? "Le site a r\xE9pondu par une page de protection anti-robot ou par une page vide : le bandeau n\u2019a pas pu \xEAtre observ\xE9 lors de ce passage automatis\xE9." : trackingCookies(before) || trackers(before) ? "Aucun bandeau reconnu ; des \xE9l\xE9ments de suivi ont \xE9t\xE9 observ\xE9s avant tout choix, mais le bandeau reste \xE0 v\xE9rifier." : "Aucun bandeau n\u2019a \xE9t\xE9 reconnu ; il peut \xEAtre masqu\xE9 au navigateur automatis\xE9.", evidence(before), !banner ? "V\xE9rifier manuellement que le bandeau appara\xEEt lors d\u2019une visite ordinaire." : ""),
+    check(0, !before ? "verifier" : banner ? "ok" : "verifier", !before ? "\xC9tat avant choix non disponible : pr\xE9sence du bandeau \xE0 v\xE9rifier." : banner ? `Bandeau reconnu${collecte.vendors?.length ? ` (${collecte.vendors.join(", ")})` : ""}.` : collecte.blocked ? "Le site a r\xE9pondu par une page de protection anti-robot ou par une page vide : le bandeau n\u2019a pas pu \xEAtre observ\xE9 lors de ce passage automatis\xE9." : trackingCookies(before) || trackers(before) ? "Aucun bandeau reconnu ; des \xE9l\xE9ments de suivi ont \xE9t\xE9 observ\xE9s avant tout choix, mais le bandeau reste \xE0 v\xE9rifier." : "Aucun bandeau n\u2019a \xE9t\xE9 reconnu ; il peut \xEAtre masqu\xE9 au navigateur automatis\xE9.", banner ? [] : evidence(before), !banner ? "V\xE9rifier manuellement que le bandeau appara\xEEt lors d\u2019une visite ordinaire." : ""),
     check(1, !before || unseenBanner ? "verifier" : trackingCookies(before) || trackers(before) ? "corriger" : "ok", !before ? "\xC9tat avant choix non disponible." : unseenBanner ? "Le bandeau n\u2019a pas \xE9t\xE9 vu ; le r\xE9sultat avant choix est \xE0 v\xE9rifier." : trackingCookies(before) || trackers(before) ? "Des \xE9l\xE9ments de suivi ont \xE9t\xE9 observ\xE9s avant tout choix." : "Aucun \xE9l\xE9ment de suivi connu observ\xE9 avant tout choix.", evidence(before), trackingCookies(before) || trackers(before) ? "Emp\xEAcher le chargement de ces \xE9l\xE9ments avant le choix." : ""),
-    check(2, unseenBanner || !reject.kind || reject.kind === "absent" ? "verifier" : reject.kind === "direct" ? "ok" : "corriger", unseenBanner ? "Bandeau non vu : acc\xE8s au refus \xE0 v\xE9rifier." : reject.kind === "direct" ? "Le refus a \xE9t\xE9 propos\xE9 d\xE8s la premi\xE8re couche." : reject.kind === "parametres" ? "Le refus a \xE9t\xE9 trouv\xE9 dans les param\xE8tres." : reject.kind === "conditionnel" ? "Le refus \xE9tait associ\xE9 \xE0 une condition." : "Aucun acc\xE8s au refus n\u2019a \xE9t\xE9 observ\xE9.", [reject.clicked, reject.alternative].filter(Boolean), reject.kind === "direct" ? "" : "Placer un bouton de refus aussi visible et direct que celui d\u2019acceptation."),
+    check(2, unseenBanner || !reject.kind || reject.kind === "absent" ? "verifier" : reject.kind === "direct" ? "ok" : "corriger", unseenBanner ? "Bandeau non vu : acc\xE8s au refus \xE0 v\xE9rifier." : reject.kind === "direct" ? "Le refus a \xE9t\xE9 propos\xE9 d\xE8s la premi\xE8re couche." : reject.kind === "parametres" ? "Le refus a \xE9t\xE9 trouv\xE9 dans les param\xE8tres." : reject.kind === "conditionnel" ? "Le refus \xE9tait associ\xE9 \xE0 une condition." : "Aucun acc\xE8s au refus n\u2019a \xE9t\xE9 observ\xE9.", [rejectButton?.text ? `Bouton de refus : \xAB ${rejectButton.text} \xBB` : null, acceptButton?.text ? `Bouton d\u2019acceptation : \xAB ${acceptButton.text} \xBB` : null, reject.alternative ? `Refus trouv\xE9 via : ${reject.alternative}` : null].filter(Boolean), reject.kind === "direct" ? "" : "Placer un bouton de refus aussi visible et direct que celui d\u2019acceptation."),
     check(3, unseenBanner || !acceptButton || !rejectButton ? "verifier" : similar ? "ok" : "corriger", unseenBanner ? "Bandeau non vu : poids visuel \xE0 v\xE9rifier." : !acceptButton || !rejectButton ? "Les deux boutons n\u2019ont pas \xE9t\xE9 identifi\xE9s ; leur poids visuel est \xE0 v\xE9rifier." : similar ? "Les boutons Refuser et Accepter ont des dimensions proches." : "Les dimensions des boutons Refuser et Accepter diff\xE8rent nettement.", [], "Comparer la taille, la couleur et la position des deux boutons."),
-    check(4, !refused || unseenBanner ? "verifier" : refusalEvidence.length ? "corriger" : "ok", !refused ? "\xC9tat apr\xE8s refus non disponible." : unseenBanner ? "Bandeau non vu : r\xE9sultat apr\xE8s refus \xE0 v\xE9rifier." : refusalEvidence.length ? "Des \xE9l\xE9ments de suivi ont \xE9t\xE9 observ\xE9s apr\xE8s le refus." : "Aucun \xE9l\xE9ment de suivi connu observ\xE9 apr\xE8s le refus.", refusalEvidence, refusalEvidence.length ? "V\xE9rifier que le refus emp\xEAche le chargement de ces \xE9l\xE9ments." : ""),
+    check(4, !refused || unseenBanner ? "verifier" : refusalEvidence.length ? "corriger" : retained.length ? "verifier" : "ok", !refused ? "\xC9tat apr\xE8s refus non disponible." : unseenBanner ? "Bandeau non vu : r\xE9sultat apr\xE8s refus \xE0 v\xE9rifier." : refusalEvidence.length ? "De nouveaux \xE9l\xE9ments de suivi sont apparus apr\xE8s le clic sur \xAB Refuser \xBB." : retained.length ? "Aucun nouveau suivi apr\xE8s le refus, mais des cookies de suivi pos\xE9s avant le clic sont rest\xE9s en place." : "Aucun \xE9l\xE9ment de suivi connu observ\xE9 apr\xE8s le refus.", refusalEvidence.length ? refusalEvidence : retained, refusalEvidence.length ? "V\xE9rifier que le refus emp\xEAche le chargement de ces \xE9l\xE9ments." : retained.length ? "V\xE9rifier que le refus supprime les cookies de suivi d\xE9j\xE0 pos\xE9s (et que rien ne les pose avant le choix)." : ""),
     check(5, collecte.bannerBackAfterReload === null || collecte.bannerBackAfterReload === void 0 || unseenBanner ? "verifier" : collecte.bannerBackAfterReload ? "corriger" : "ok", unseenBanner ? "Bandeau non vu : m\xE9morisation du choix \xE0 v\xE9rifier." : collecte.bannerBackAfterReload ? "Le bandeau est revenu apr\xE8s rechargement." : "Le bandeau n\u2019est pas revenu apr\xE8s rechargement.", [], collecte.bannerBackAfterReload ? "Conserver le choix et masquer le bandeau apr\xE8s rechargement." : ""),
     check(6, !accepted || unseenBanner ? "verifier" : trackingCookies(accepted) || trackers(accepted) ? "ok" : trackedEarlier ? "verifier" : "na", !accepted ? "\xC9tat apr\xE8s acceptation non disponible." : unseenBanner ? "Bandeau non vu : r\xE9sultat apr\xE8s acceptation \xE0 v\xE9rifier." : trackingCookies(accepted) || trackers(accepted) ? "Des outils de suivi ont \xE9t\xE9 observ\xE9s apr\xE8s acceptation." : trackedEarlier ? "Aucun outil de suivi connu observ\xE9 apr\xE8s acceptation." : "Aucun service de suivi connu sur ce site : \xAB Accepter \xBB n\u2019a rien \xE0 d\xE9clencher.", evidence(accepted), trackedEarlier ? "V\xE9rifier que les outils attendus sont bien reli\xE9s au bouton Accepter." : "Aucune action particuli\xE8re sur ce point."),
     check(7, !hasGoogle ? "na" : unseenBanner || consent.defaultDenied === null || consent.updateOnChoice === null ? "verifier" : consent.defaultDenied && consent.updateOnChoice ? "ok" : "corriger", !hasGoogle ? "Aucun service Google d\xE9tect\xE9 : contr\xF4le sans objet." : consent.defaultDenied === null || consent.updateOnChoice === null ? "Les signaux Consent Mode n\u2019ont pas tous pu \xEAtre observ\xE9s." : consent.defaultDenied && consent.updateOnChoice ? "Refus par d\xE9faut et mise \xE0 jour au choix observ\xE9s." : "Le refus par d\xE9faut ou la mise \xE0 jour au choix n\u2019a pas \xE9t\xE9 observ\xE9.", [gcs.avant, gcs.refus, gcs.acceptation].filter(Boolean).map((v) => `Signal gcs : ${v}`), "V\xE9rifier les valeurs par d\xE9faut et leur mise \xE0 jour lors du choix."),
     check(8, missing || unseenBanner ? "verifier" : longCookies.length ? "corriger" : "ok", missing ? "\xC9tats incomplets : la dur\xE9e des cookies est \xE0 v\xE9rifier." : unseenBanner ? "Bandeau non vu : interpr\xE9tation des cookies \xE0 v\xE9rifier." : longCookies.length ? "Des cookies de suivi d\xE9passant 13 mois ont \xE9t\xE9 observ\xE9s." : "Aucun cookie de suivi d\xE9passant 13 mois observ\xE9.", longCookies, longCookies.length ? "R\xE9duire la dur\xE9e de ces cookies de suivi." : "")
   ];
-  const observationsByState = { avant: before, refus: refused, acceptation: accepted };
+  const observationsByState = { avant: before, refus: refused ? { ...refusalObs, cookies: refusalObs.cookies.concat(retainedState ? retainedState.cookies : []) } : null, acceptation: accepted };
   return {
     version: 1,
     url: text(collecte.url || meta.url, 200),
