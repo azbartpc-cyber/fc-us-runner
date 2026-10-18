@@ -100,9 +100,10 @@ __export(fc_worker_exports, {
   createFcClient: () => createFcClient,
   runFcWorker: () => runFcWorker
 });
+import { createHash as createHash2 } from "node:crypto";
 async function collectFc(browser, url, { allowLocal = false } = {}) {
   await assertPublicUrl(url, { allowLocal });
-  const context = await browser.newContext({ locale: "fr-FR", timezoneId: "Europe/Paris" });
+  const context = await browser.newContext(US ? { locale: "en-US", timezoneId: "America/New_York" } : { locale: "fr-FR", timezoneId: "Europe/Paris" });
   try {
     const page = await context.newPage();
     await guardPageRequests(page, { allowLocal });
@@ -132,21 +133,48 @@ async function collectFc(browser, url, { allowLocal = false } = {}) {
     });
   }
 }
-function createFcClient({ baseUrl = process.env.FC_BASE_URL || "https://f-cookies.org", key = process.env.FC_INGEST_KEY || "", fetchImpl = fetch } = {}) {
-  const endpoint = new URL("/ingest.php", baseUrl).href;
-  const headers = { "X-FC-Key": key };
+function createFcClient({ baseUrl = process.env.FC_BASE_URL || "https://f-cookies.org", key = process.env.FC_INGEST_KEY || "", fetchImpl = fetch, auth = process.env.FC_AUTH || "key" } = {}) {
+  const oidc = auth === "oidc";
+  const endpoint = new URL(oidc ? "/ingest" : "/ingest.php", baseUrl).href;
+  let token = null, tokenAt = 0;
+  const oidcToken = async () => {
+    if (token && Date.now() - tokenAt < 24e4) return token;
+    const response = await fetchImpl(`${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${encodeURIComponent(new URL(baseUrl).origin)}`, { headers: { Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: AbortSignal.timeout(2e4) });
+    if (!response.ok) throw new Error(`OIDC HTTP ${response.status}`);
+    token = (await response.json()).value;
+    tokenAt = Date.now();
+    return token;
+  };
   const call = async (url, init = {}) => {
+    const headers = oidc ? { "X-OC-OIDC": await oidcToken() } : { "X-FC-Key": key };
     const response = await fetchImpl(url, { ...init, headers: { ...headers, ...init.headers }, signal: AbortSignal.timeout(2e4) });
     if (!response.ok && response.status !== 422) throw new Error(`F-Cookies HTTP ${response.status}`);
     return response.json();
   };
+  const putChunks = async (payload) => {
+    const encoded = b64url2(Buffer.from(JSON.stringify(payload))), id = createHash2("sha256").update(String(payload.url)).digest("hex").slice(0, 24), parts = [];
+    for (let i = 0; i < encoded.length; i += 4e3) parts.push(encoded.slice(i, i + 4e3));
+    let last = null;
+    for (let i = 0; i < parts.length; i++) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          last = await call(`${endpoint}?put=1&id=${id}&i=${i}&n=${parts.length}&d=${parts[i]}`);
+          break;
+        } catch (error) {
+          if (attempt >= 3) throw error;
+          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        }
+      }
+    }
+    return last;
+  };
   return {
     async queue() {
-      const data = await call(`${endpoint}?queue=fr`);
+      const data = await call(`${endpoint}?queue=${US ? "us" : "fr"}`);
       return data?.ok ? data.urls || [] : [];
     },
     submit(payload) {
-      return call(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      return oidc ? putChunks(payload) : call(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     }
   };
 }
@@ -177,13 +205,15 @@ async function runFcWorker({ browser, signal, logger: logger2 = logger, client: 
     await wait(pollMs);
   }
 }
-var REGION2, WAIT_MS;
+var US, REGION2, WAIT_MS, b64url2;
 var init_fc_worker = __esm({
   "src/fc-worker.js"() {
     init_ssrf();
     init_log();
-    REGION2 = "France (Dunkerque), FR";
+    US = process.env.FC_REGION === "us";
+    REGION2 = US ? "United States (GitHub Actions), US" : "France (Dunkerque), FR";
     WAIT_MS = 7e3;
+    b64url2 = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 });
 
@@ -1142,7 +1172,7 @@ async function startRunner({ signal, browser, ...options } = {}) {
   const instance = browser || await chromium.launch({ headless: true });
   try {
     const jobs = [runWorker({ ...options, browser: instance, signal })];
-    if (process.env.FC_INGEST_KEY) jobs.push(Promise.resolve().then(() => (init_fc_worker(), fc_worker_exports)).then((m) => m.runFcWorker({ browser: instance, signal })));
+    if (process.env.FC_INGEST_KEY || process.env.FC_AUTH === "oidc") jobs.push(Promise.resolve().then(() => (init_fc_worker(), fc_worker_exports)).then((m) => m.runFcWorker({ browser: instance, signal })));
     await Promise.all(jobs);
   } finally {
     if (ownedBrowser) await instance.close().catch(() => {
