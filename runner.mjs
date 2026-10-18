@@ -946,7 +946,7 @@ function buildReport(collecte = {}, meta = {}) {
     domain: text(collecte.domain || meta.domain, 120),
     date: text(meta.date || (/* @__PURE__ */ new Date()).toISOString(), 40),
     locale: text(meta.locale || collecte.locale || "fr-FR", 10),
-    region: REGION,
+    region: text(meta.region || REGION, 60),
     vendors: list(collecte.vendors, 10, 40),
     tcf: !!collecte.tcf,
     banner: { present: banner, actions: buttons.slice(0, 12).map((b) => ({ text: text(b.text, 60), kind: text(b.kind, 20) })) },
@@ -995,6 +995,8 @@ function createProfileCleanup() {
 }
 
 // src/scan.js
+var isUs = () => (process.env.OC_REGION || config.region) === "us";
+var REGION_LABEL = () => isUs() ? "\xC9tats-Unis (GitHub Actions)" : "France (Dunkerque)";
 var safeError = (error) => error?.code === "ssrf" ? "URL refus\xE9e" : "\xC9chec du scan";
 async function scanJob(job, opts = {}) {
   const collect2 = opts.collect || collect;
@@ -1008,8 +1010,8 @@ async function scanJob(job, opts = {}) {
       await validateUrl(job.url, { allowLocal: opts.allowLocal });
       if (!await checkRobots(job.url, opts.userAgent || "OpenCookiesBot", { allowLocal: opts.allowLocal }))
         return { status: "refused", error: "Acc\xE8s interdit par robots.txt" };
-      const collecte = await collect2(opts.browser, job.url, { ...opts, profileCleanup: profiles, locale: job.locale });
-      const report = await buildReport2(collecte, { id: job.id, url: job.url, domain: job.domain, region: "France (Dunkerque)", locale: "fr-FR", timezone: "Europe/Paris" });
+      const collecte = await collect2(opts.browser, job.url, { ...opts, profileCleanup: profiles, locale: job.locale, ...isUs() && !opts.contextOptions ? { contextOptions: { locale: "en-US", timezoneId: "America/New_York" } } : {} });
+      const report = await buildReport2(collecte, { id: job.id, url: job.url, domain: job.domain, region: REGION_LABEL(), locale: isUs() ? "en-US" : "fr-FR", timezone: isUs() ? "America/New_York" : "Europe/Paris" });
       return { status: "done", report, shots: Object.fromEntries(["avant", "refus", "acceptation"].map((k) => [k, collecte.states?.[k]?.shot]).filter(([, v]) => typeof v === "string")) };
     };
     return await Promise.race([run(), new Promise((_, reject) => {
