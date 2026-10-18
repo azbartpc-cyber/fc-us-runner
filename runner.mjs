@@ -350,11 +350,42 @@ async function fetchRobots(initialUrl, opts) {
 // src/collect.js
 init_ssrf();
 import { createHash } from "node:crypto";
-var ACCEPT = /accepter|accept all|accept cookies|tout accepter|autoriser|agree|allow all/i;
-var REJECT = /refus|rejeter|reject|decline|continuer sans|sans consentement|deny/i;
-var SETTINGS = /param[eèé]tr|personnali[sz]er|customi[sz]e|manage|preferences|options|choisir/i;
-var CMP = /didomi|onetrust|axeptio|cookiebot|tarteaucitron|usercentrics|sourcepoint|quantcast|trustarc|iubenda|complianz|consentmanager|cookiebanner|cookie-?consent|consent|privacy-?center|privacy-mgmt|sp_message|sp-prod|cmp./i;
-var isKnownCmpFrame = (frame) => CMP.test(frame.url()) || /^about:(srcdoc|blank)/.test(frame.url());
+
+// src/banner-detect.js
+var REJECT_SRC = String.raw`refus|rejet|reject|decline|deny|disagree|non merci|continuer sans|sans consentement|sans accepter|n['’]accepte (rien|pas)|ne pas accepter|je ne veux pas|pas d['’]accord|tout refuser|only (necessary|essential|required)|necessary only|essential only|uniquement (les )?(cookies )?(nécessaires|essentiels|obligatoires)|seulement (les )?(cookies )?(nécessaires|essentiels)|nur (notwendige|erforderliche|technisch)|ablehn|nicht zustimmen|rechaz|solo (necesarias|esenciales)|rifiut|solo necessari|recus|apenas (necessários|essenciais)|weiger|alleen (noodzakelijke|essentiële)|odrzu|tylko niezb|avvis|endast nödvändiga|afvis|kun nødvendige|refuz|doar necesare|απόρριψη|απορρίπτω|μόνο τα απαραίτητα|رفض|الضرورية فقط`;
+var ACCEPT_SRC = String.raw`accept|j['’]accepte|ok pour moi|autoriser|agree|allow|akzept|zustimm|einverstanden|alle erlauben|aceptar|acepto|accett|acconsent|aceitar|concordo|aceito|accepteren|akkoord|zaakceptuj|zgadzam|akceptuj|godkänn|tillåt|tillad|godkend|sunt de acord|permit|αποδοχή|αποδέχομαι|συμφωνώ|موافق|قبول|got it|consent to all|allow all`;
+var SETTINGS_SRC = String.raw`param[eèé]tr|personnali[sz]|customi[sz]e|manage|preference|options|choisi|gérer|gerer|configur|réglage|détails|details|einstellung|auswahl|anpassen|ajustes|gestionar|impostazioni|gestisci|personalizza|definições|gerir|instellingen|beheren|ustawienia|zarządzaj|inställningar|indstillinger|setări|ρυθμίσεις|διαχείριση|إعدادات|تخصيص|settings|vælg|se valgte|se alle|learn more|en savoir plus`;
+var CMP_CATALOG = [
+  { n: "axeptio", box: ["#axeptio_overlay"], acc: ["#axeptio_btn_acceptAll"], rej: ["#axeptio_btn_dismiss"], set: ["#axeptio_btn_configure"] },
+  { n: "didomi", box: ["#didomi-host", "#didomi-popup", ".didomi-popup-container", "#didomi-notice"], acc: ["#didomi-notice-agree-button", ".didomi-components-button--agree"], rej: ["#didomi-notice-disagree-button", ".didomi-continue-without-agreeing", ".didomi-components-button--disagree"], set: ["#didomi-notice-learn-more-button"] },
+  { n: "onetrust", box: ["#onetrust-banner-sdk", "#onetrust-consent-sdk"], acc: ["#onetrust-accept-btn-handler"], rej: ["#onetrust-reject-all-handler", ".ot-pc-refuse-all-handler"], set: ["#onetrust-pc-btn-handler"] },
+  { n: "cookiebot", box: ["#CybotCookiebotDialog"], acc: ["#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll", "#CybotCookiebotDialogBodyButtonAccept", "#CybotCookiebotDialogBodyLevelButtonAccept"], rej: ["#CybotCookiebotDialogBodyButtonDecline", "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll"], set: ["#CybotCookiebotDialogBodyLevelButtonCustomize", "#CybotCookiebotDialogBodyButtonDetails"] },
+  { n: "usercentrics", box: ["#usercentrics-root", "#usercentrics-cmp-ui"], acc: ['[data-testid="uc-accept-all-button"]'], rej: ['[data-testid="uc-deny-all-button"]'], set: ['[data-testid="uc-more-button"]'] },
+  { n: "sourcepoint", box: ['div[id^="sp_message_container"]', 'iframe[id^="sp_message_iframe"]'], acc: ["button.sp_choice_type_11"], rej: ["button.sp_choice_type_13"], set: ["button.sp_choice_type_12"] },
+  { n: "trustarc", box: ["#truste-consent-track", "#consent_blackbar", "#teconsent"], acc: ["#truste-consent-button"], rej: ["#truste-consent-required"], set: ["#truste-show-consent"] },
+  { n: "iubenda", box: ["#iubenda-cs-banner"], acc: [".iubenda-cs-accept-btn"], rej: [".iubenda-cs-reject-btn"], set: [".iubenda-cs-customize-btn"] },
+  { n: "termly", box: ["#termly-code-snippet-support", '[data-tid="banner"]'], acc: ['[data-tid="banner-accept"]', ".t-acceptAllButton"], rej: ['[data-tid="banner-decline"]', ".t-declineButton"], set: ['[data-tid="banner-preferences"]', ".t-preference-button"] },
+  { n: "cookieyes", box: [".cky-consent-container", ".cky-consent-bar"], acc: [".cky-btn-accept"], rej: [".cky-btn-reject"], set: [".cky-btn-customize"] },
+  { n: "complianz", box: ["#cmplz-cookiebanner-container", ".cmplz-cookiebanner"], acc: [".cmplz-accept"], rej: [".cmplz-deny"], set: [".cmplz-view-preferences"] },
+  { n: "osano", box: [".osano-cm-window", ".osano-cm-dialog"], acc: [".osano-cm-accept-all"], rej: [".osano-cm-deny", ".osano-cm-denyAll"], set: [".osano-cm-manage"] },
+  { n: "klaro", box: [".klaro .cookie-notice", ".klaro"], acc: [".cm-btn-accept-all", ".cm-btn-success"], rej: [".cm-btn-decline"], set: [".cm-btn-learn-more", ".cm-link.learn-more"] },
+  { n: "tarteaucitron", box: ["#tarteaucitronAlertBig"], acc: ["#tarteaucitronPersonalize2", ".tarteaucitronAllow"], rej: ["#tarteaucitronAllDenied2", ".tarteaucitronDeny"], set: ["#tarteaucitronCloseAlert"] },
+  { n: "consentmanager", box: ["#cmpbox"], acc: [".cmpboxbtnyes"], rej: [".cmpboxbtnno"], set: [".cmpboxbtncustom"] },
+  { n: "cookiescript", box: ["#cookiescript_injected"], acc: ["#cookiescript_accept"], rej: ["#cookiescript_reject"], set: ["#cookiescript_setup"] },
+  { n: "borlabs", box: ["#BorlabsCookieBox", ".borlabs-cookie"], acc: ["._brlbs-btn-accept-all"], rej: ["._brlbs-refuse-btn"], set: ["._brlbs-btn-cookie-preference"] },
+  { n: "cookiefirst", box: ["[data-cookiefirst-widget]", "#cookiefirst-root"], acc: ['[data-cookiefirst-action="accept"]'], rej: ['[data-cookiefirst-action="reject"]'], set: ['[data-cookiefirst-action="adjust"]'] },
+  { n: "cookiehub", box: [".ch2-container"], acc: [".ch2-allow-all-btn"], rej: [".ch2-deny-all-btn"], set: [".ch2-open-settings-btn"] },
+  { n: "civic", box: ["#ccc"], acc: ["#ccc-notify-accept"], rej: ["#ccc-notify-reject"], set: ["#ccc-notify-settings"] },
+  { n: "piwik", box: [".ppms_cm_popup_overlay", "#ppms_cm_consent_popup"], acc: [".ppms_cm_agree-to-all"], rej: [".ppms_cm_reject-all"], set: [".ppms_cm_settings"] },
+  { n: "cookieconsent", box: ["#cc-main", "#cc_div"], acc: ['[data-role="all"]'], rej: ['[data-role="necessary"]'], set: ['[data-role="show"]'] },
+  { n: "cookie-notice", box: ["#cookie-notice"], acc: ["#cn-accept-cookie"], rej: ["#cn-refuse-cookie"], set: ["#cn-more-info"] },
+  { n: "cookie-law-info", box: ["#cookie-law-info-bar", ".cli-modal-dialog"], acc: ["#wt-cli-accept-all-btn", "#cookie_action_close_header"], rej: ["#wt-cli-reject-btn", "#cookie_action_close_header_reject"], set: [".cli_settings_button"] },
+  { n: "fundingchoices", box: [".fc-consent-root", ".fc-dialog-container"], acc: [".fc-cta-consent"], rej: [".fc-cta-do-not-consent"], set: [".fc-cta-manage-options"] }
+];
+var rx = (src2) => new RegExp(src2, "i");
+var ACCEPT = rx(ACCEPT_SRC);
+var REJECT = rx(REJECT_SRC);
+var SETTINGS = rx(SETTINGS_SRC);
 function classifyButton(text2 = "") {
   const value = String(text2).trim();
   if (REJECT.test(value)) return "reject";
@@ -362,6 +393,96 @@ function classifyButton(text2 = "") {
   if (SETTINGS.test(value)) return "settings";
   return "other";
 }
+var FIND_BANNER_SRC = String.raw`function () {
+  const CAT = __CATALOG__;
+  const REJ = new RegExp(__REJ__, 'i'), ACC = new RegExp(__ACC__, 'i'), SET = new RegExp(__SET__, 'i');
+  const all = [], walk = root => { try { for (const el of root.querySelectorAll('*')) { all.push(el); if (el.shadowRoot) walk(el.shadowRoot); } } catch (e) {} };
+  walk(document);
+  const parentOf = n => { const p = n.parentNode || n.host || null; return p && p.nodeType === 11 ? (p.host || null) : p; };   // un shadow DOM : on saute la racine d'ombre pour rejoindre son hôte
+  const visible = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const isBtn = e => /^(BUTTON|A|INPUT)$/.test(e.tagName) || e.getAttribute('role') === 'button' || e.hasAttribute('onclick') || (e.children.length === 0 && !e.closest('button,a,[role="button"],input') && (e.innerText || '').trim().length > 0 && (e.innerText || '').trim().length <= 45 && getComputedStyle(e).cursor === 'pointer');
+  const label = el => (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().replace(/\s+/g, ' ');
+  const textKind = t => REJ.test(t) ? 'reject' : ACC.test(t) ? 'accept' : SET.test(t) ? 'settings' : 'other';
+  const kinds = new WeakMap(); let vendor = null;
+  const nameRe = /cookie|consent|privacy|gdpr|rgpd|didomi|onetrust|axeptio|tarteaucitron|cookiebot|usercentrics|sourcepoint|trustarc|iubenda|complianz|osano|cybot|termly|borlabs|cookieyes|quantcast|consentmanager/i;
+  const overlay = el => { const p = getComputedStyle(el).position; return p === 'fixed' || p === 'sticky' || /^(alert)?dialog$/.test(el.getAttribute('role') || '') || el.getAttribute('aria-modal') === 'true' || el.tagName === 'DIALOG'; };
+  const rootLike = el => overlay(el) || nameRe.test((el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '') + ' ' + (el.getAttribute('aria-label') || ''));
+  const within = (e, root) => { for (let n = e; n; n = parentOf(n)) if (n === root) return true; return false; };
+  const sizeOk = el => { const r = el.getBoundingClientRect(); return r.width >= 120 && r.height >= 30; };
+  const q = (root, sel) => all.filter(e => { try { return e.matches(sel); } catch (x) { return false; } });   // traverse aussi les shadow DOM
+
+  // 1. fournisseur connu : on cherche d'abord les boutons par leurs sélecteurs (quelle que soit la langue du libellé)
+  let best = null, bestScore = -1;
+  for (const c of CAT) {
+    const found = { accept: [], reject: [], settings: [] };
+    for (const [k, list] of [['accept', c.acc], ['reject', c.rej], ['settings', c.set]]) for (const sel of list) for (const el of q(document, sel)) if (visible(el)) found[k].push(el);
+    // un cadre Sourcepoint ou similaire : les boutons sont alors dans le document du cadre (cette fonction y est aussi exécutée)
+    const n = found.accept.length + found.reject.length;
+    if (!n) continue;
+    for (const k of ['accept', 'reject', 'settings']) for (const el of found[k]) kinds.set(el, k);
+    let box = null;
+    for (const sel of c.box) { const el = q(document, sel).find(visible); if (el) { box = el; break; } }
+    const first = found.accept[0] || found.reject[0];
+    if (!box || !within(first, box) && !box.shadowRoot) { box = null; for (let a = parentOf(first); a && a !== document.body && a !== document.documentElement && a.nodeType === 1; a = parentOf(a)) { if (sizeOk(a) && rootLike(a)) box = a; } }
+    if (!box) box = first.parentNode && first.parentNode.nodeType === 1 ? first.parentNode : first;
+    const score = found.accept.length + found.reject.length + found.settings.length;
+    if (score > bestScore) { best = box; bestScore = score; vendor = c.n; }
+  }
+  if (best) {
+    // les autres boutons du bandeau reçoivent leur rôle d'après leur libellé
+    for (const el of all) if (isBtn(el) && within(el, best) && visible(el) && !kinds.has(el)) { const k = textKind(label(el)); if (k !== 'other') kinds.set(el, k); }
+    for (const el of all) if (kinds.has(el) && within(el, best)) el.setAttribute('data-oc-kind', kinds.get(el));
+    window.__ocKinds = kinds; window.__ocVendor = vendor; window.__ocBanner = best; return true;
+  }
+
+  // 2. repli : boutons de choix (libellé), regroupement puis boîte du bandeau
+  const choices = [];
+  for (const el of all) {
+    if (!isBtn(el) || !visible(el)) continue;
+    const t = label(el);
+    if (!t || t.length > 45) continue;
+    const k = textKind(t); if (k !== 'other') { choices.push({ el, k }); kinds.set(el, k); }
+  }
+  const countBtn = root => all.filter(e => isBtn(e) && within(e, root)).length;
+  const sizeOf = root => all.filter(e => within(e, root)).length;
+  let bestBox = null, bestKinds = -1, bestSize = Infinity;
+  for (const seed of choices) {
+    if (seed.k === 'settings') continue;   // un lien « Gérer mes cookies » seul, c'est le pied de page, pas le bandeau
+    let group = null;
+    for (let a = parentOf(seed.el); a && a !== document.body && a !== document.documentElement && a.nodeType === 1; a = parentOf(a)) {
+      const ks = new Set(choices.filter(c => within(c.el, a)).map(c => c.k));
+      if (ks.has('accept') && (ks.has('reject') || ks.has('settings'))) { group = { el: a, n: ks.size }; break; }
+      if (ks.size >= 2) { group = { el: a, n: ks.size }; break; }
+    }
+    let box = group ? group.el : null, n = group ? group.n : 1;
+    const base = box || seed.el, baseCount = countBtn(base);
+    let top = null;
+    for (let a = box ? parentOf(box) : parentOf(seed.el); a && a !== document.body && a !== document.documentElement && a.nodeType === 1; a = parentOf(a)) {
+      if (countBtn(a) > baseCount + 30) break;
+      if (rootLike(a) && sizeOk(a)) top = a;   // un conteneur fixe de hauteur nulle (Axeptio) n'est pas la boîte du bandeau
+    }
+    if (top) box = top;
+    if (!box || !sizeOk(box)) continue;
+    const size = sizeOf(box);
+    if (n > bestKinds || (n === bestKinds && size < bestSize)) { bestBox = box; bestKinds = n; bestSize = size; }
+  }
+  if (!bestBox) {
+    const cands = all.filter(el => visible(el) && el.getBoundingClientRect().width > 180 && el !== document.body && el !== document.documentElement
+      && overlay(el) && nameRe.test((el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '') + ' ' + (el.getAttribute('aria-label') || '')) && countBtn(el) >= 2 && countBtn(el) <= 150);
+    for (const c of cands) { const n = countBtn(c); if (n > bestKinds) { bestKinds = n; bestBox = c; } }
+  }
+  // Dans un cadre (CMP en iframe), tout le document est le bandeau : le lien de refus se trouve souvent hors du groupe de boutons.
+  if (window.top !== window && choices.some(c => c.k === 'accept' || c.k === 'reject')) bestBox = document.body;
+  if (bestBox) for (const el of all) if (kinds.has(el) && within(el, bestBox)) el.setAttribute('data-oc-kind', kinds.get(el));
+  window.__ocKinds = kinds; window.__ocVendor = null; window.__ocBanner = bestBox || null;
+  return !!bestBox;
+}`;
+var src = FIND_BANNER_SRC.replace("__CATALOG__", JSON.stringify(CMP_CATALOG)).replace("__REJ__", JSON.stringify(REJECT_SRC)).replace("__ACC__", JSON.stringify(ACCEPT_SRC)).replace("__SET__", JSON.stringify(SETTINGS_SRC));
+var findBanner = (0, eval)("(" + src + ")");
+
+// src/collect.js
+var CMP = /didomi|onetrust|axeptio|cookiebot|tarteaucitron|usercentrics|sourcepoint|quantcast|trustarc|iubenda|complianz|consentmanager|cookiebanner|cookie-?consent|consent|privacy-?center|privacy-mgmt|sp_message|sp-prod|cmp./i;
+var isKnownCmpFrame = (frame) => CMP.test(frame.url()) || /^about:(srcdoc|blank)/.test(frame.url());
 function classifyRejectKind({ clicked = false, inSettings = false, available = false } = {}) {
   if (clicked) return inSettings ? "parametres" : "direct";
   return available ? "conditionnel" : "absent";
@@ -372,96 +493,6 @@ function collectionWaitMs(value) {
 var bounded = (promise, ms, fallback = null) => Promise.race([promise, new Promise((resolve2) => setTimeout(() => resolve2(fallback), ms))]);
 var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
 var ordinaryUserAgent = (version) => `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${String(version || "130.0.0.0")} Safari/537.36`;
-function findBanner() {
-  const all = [], walk = (root) => {
-    try {
-      for (const el of root.querySelectorAll("*")) {
-        all.push(el);
-        if (el.shadowRoot) walk(el.shadowRoot);
-      }
-    } catch {
-    }
-  };
-  walk(document);
-  const parentOf = (n) => n.parentNode || n.host || null;
-  const visible = (el) => {
-    const r = el.getBoundingClientRect(), s = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
-  };
-  const isBtn = (e) => /^(BUTTON|A|INPUT)$/.test(e.tagName) || e.getAttribute("role") === "button";
-  const REJ = /refus|rejeter|reject|decline|continuer sans|sans consentement|deny|non merci|ablehnen|rechazar|rifiut/i;
-  const ACC = /accepter|accept|j.?accepte|autoriser|agree|allow all|akzeptier|aceptar|accetta|zustimm/i;
-  const SET = /param[eèé]tr|personnali[sz]|customi[sz]e|manage|preferences|options|choisir|gérer|einstellung|configur/i;
-  const kindOf = (t) => REJ.test(t) ? "reject" : ACC.test(t) ? "accept" : SET.test(t) ? "settings" : "other";
-  const nameRe = /cookie|consent|privacy|gdpr|rgpd|didomi|onetrust|axeptio|tarteaucitron|cookiebot|usercentrics|sourcepoint|trustarc|iubenda|complianz|osano|cybot|termly|borlabs|cookieyes|quantcast|consentmanager/i;
-  const rootLike = (el) => {
-    const s = getComputedStyle(el);
-    return s.position === "fixed" || s.position === "sticky" || el.getAttribute("role") === "dialog" || el.getAttribute("role") === "alertdialog" || el.getAttribute("aria-modal") === "true" || el.tagName === "DIALOG" || nameRe.test(`${el.id} ${typeof el.className === "string" ? el.className : ""} ${el.getAttribute("aria-label") || ""}`);
-  };
-  const overlay = (el) => {
-    const p = getComputedStyle(el).position;
-    return p === "fixed" || p === "sticky" || /^(alert)?dialog$/.test(el.getAttribute("role") || "") || el.getAttribute("aria-modal") === "true" || el.tagName === "DIALOG";
-  };
-  const choices = [];
-  for (const el of all) {
-    if (!isBtn(el) || !visible(el)) continue;
-    const t = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ");
-    if (!t || t.length > 45) continue;
-    const k = kindOf(t);
-    if (k !== "other") choices.push({ el, k });
-  }
-  const within = (e, root) => {
-    for (let n = e; n; n = parentOf(n)) if (n === root) return true;
-    return false;
-  };
-  const countBtn = (root) => all.filter((e) => isBtn(e) && within(e, root)).length;
-  const sizeOf = (root) => all.filter((e) => within(e, root)).length;
-  let best = null, bestScore = -1, bestSize = Infinity;
-  for (const seed of choices) {
-    let group = null;
-    for (let a = parentOf(seed.el); a && a !== document.body && a !== document.documentElement && a.nodeType === 1; a = parentOf(a)) {
-      const kinds = new Set(choices.filter((c) => within(c.el, a)).map((c) => c.k));
-      if (kinds.has("accept") && (kinds.has("reject") || kinds.has("settings"))) {
-        group = { el: a, n: kinds.size };
-        break;
-      }
-      if (kinds.size >= 2) {
-        group = { el: a, n: kinds.size };
-        break;
-      }
-    }
-    let box = group ? group.el : null, n = group ? group.n : 1;
-    const base = box || seed.el, baseCount = countBtn(base);
-    let top = null;
-    for (let a = box ? parentOf(box) : parentOf(seed.el); a && a !== document.body && a !== document.documentElement && a.nodeType === 1; a = parentOf(a)) {
-      if (countBtn(a) > baseCount + 30) break;
-      if (rootLike(a)) top = a;
-    }
-    if (top) box = top;
-    if (!box) continue;
-    const r = box.getBoundingClientRect();
-    if (r.width < 120 || r.height < 30) continue;
-    const size = sizeOf(box);
-    if (n > bestScore || n === bestScore && size < bestSize) {
-      best = box;
-      bestScore = n;
-      bestSize = size;
-    }
-  }
-  if (!best) {
-    const cands = all.filter((el) => visible(el) && el.getBoundingClientRect().width > 180 && el !== document.body && el !== document.documentElement && overlay(el) && nameRe.test(`${el.id} ${typeof el.className === "string" ? el.className : ""} ${el.getAttribute("aria-label") || ""}`) && countBtn(el) >= 1 && countBtn(el) <= 150);
-    for (const c of cands) {
-      const n = countBtn(c);
-      if (n > bestScore) {
-        bestScore = n;
-        best = c;
-      }
-    }
-  }
-  if (window.top !== window && choices.some((c) => c.k === "accept")) best = document.body;
-  window.__ocBanner = best || null;
-  return !!best;
-}
 async function inspect(page, label, limits) {
   try {
     await bounded(page.evaluate(findBanner), 2500).catch(() => null);
@@ -493,11 +524,11 @@ async function inspect(page, label, limits) {
         for (let node = el; node; node = node.parentNode || node.host) if (node === banner) return true;
         return false;
       };
-      const buttons = banner ? nodes.filter((el) => /^(BUTTON|A|INPUT)$/.test(el.tagName) || el.getAttribute("role") === "button").filter((el) => inBanner(el) && visible(el)).map((el) => {
+      const buttons = banner ? nodes.filter((el) => /^(BUTTON|A|INPUT)$/.test(el.tagName) || el.getAttribute("role") === "button" || el.hasAttribute("data-oc-kind")).filter((el) => inBanner(el) && visible(el)).map((el) => {
         const text2 = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 180);
         if (!text2) return null;
         const s = getComputedStyle(el), r = el.getBoundingClientRect();
-        return { text: text2, layer: 1, w: Math.round(r.width), h: Math.round(r.height), fontSize: parseFloat(s.fontSize) || null, bg: s.backgroundColor, color: s.color, _tag: el.tagName, _selector: el.id ? `#${CSS.escape(el.id)}` : null };
+        return { text: text2, kind: window.__ocKinds && window.__ocKinds.get(el) || null, layer: 1, w: Math.round(r.width), h: Math.round(r.height), fontSize: parseFloat(s.fontSize) || null, bg: s.backgroundColor, color: s.color, _tag: el.tagName, _selector: el.id ? `#${CSS.escape(el.id)}` : null };
       }).filter(Boolean) : [];
       const cookies = document.cookie.split(";").map((x) => x.trim().split("=")[0]).filter(Boolean).map((name) => ({ name, domain: location.hostname, days: null, firstParty: true }));
       let gcs = null;
@@ -550,13 +581,14 @@ async function inspect(page, label, limits) {
           };
           const buttons = banner ? all.filter((el) => inside(el) && (/^(BUTTON|A|INPUT)$/.test(el.tagName) || el.getAttribute("role") === "button") && visible(el)).map((el) => {
             const r = el.getBoundingClientRect(), s = getComputedStyle(el);
-            return { text: (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 180), layer: 1, w: Math.round(r.width), h: Math.round(r.height), fontSize: parseFloat(s.fontSize) || null, bg: s.backgroundColor, color: s.color };
+            return { text: (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 180), kind: window.__ocKinds && window.__ocKinds.get(el) || null, layer: 1, w: Math.round(r.width), h: Math.round(r.height), fontSize: parseFloat(s.fontSize) || null, bg: s.backgroundColor, color: s.color };
           }).filter((x) => x.text) : [];
-          return { bannerPresent: !!banner, buttons };
+          return { bannerPresent: !!banner, buttons, vendor: window.__ocVendor || null };
         }), 900);
         if (data) {
           result.bannerPresent ||= data.bannerPresent;
           result.buttons.push(...data.buttons);
+          if (data.vendor && !result.vendor) result.vendor = data.vendor;
         }
       } catch {
       }
@@ -665,6 +697,18 @@ async function collect(browser, url, opts = {}) {
     let available = false;
     for (const frame of page.frames()) {
       if (frame !== page.mainFrame() && !isKnownCmpFrame(frame)) continue;
+      const marked = frame.locator(`[data-oc-kind="${kind}"]`);
+      const markedCount = await bounded(marked.count(), 1e3, 0);
+      for (let m = 0; m < Math.min(markedCount, 6); m++) {
+        const item = marked.nth(m);
+        if (!await bounded(item.isVisible().catch(() => false), 500, false)) continue;
+        available = true;
+        try {
+          await item.click({ timeout: 1500 });
+          return { clicked: true, available };
+        } catch {
+        }
+      }
       const candidates = frame.locator('button,a,[role="button"],input[type="button"],input[type="submit"]');
       await bounded(frame.evaluate(findBanner), 1500).catch(() => null);
       const count = await bounded(candidates.count(), 1e3, 0);
@@ -685,14 +729,14 @@ async function collect(browser, url, opts = {}) {
           for (let n = el; n; n = n.parentNode || n.host) if (n === banner) return true;
           return false;
         };
-        return els.map((el) => !!banner && inside(el));
+        return els.map((el) => ({ inside: !!banner && inside(el), kind: window.__ocKinds && window.__ocKinds.get(el) || null }));
       }), 1e3, []);
-      const wanted = Array.from({ length: Math.min(count, inBanner.length || count) }, (_, i) => i).filter((i) => inBanner[i]).slice(0, 100);
+      const wanted = Array.from({ length: Math.min(count, inBanner.length || count) }, (_, i) => i).filter((i) => inBanner[i]?.inside).slice(0, 100);
       for (const i of wanted) {
         const item = candidates.nth(i);
         if (!await bounded(item.isVisible().catch(() => false), 500, false)) continue;
         const text2 = await bounded(item.innerText().catch(() => item.getAttribute("aria-label") || ""), 700, "");
-        if (classifyButton(text2) === kind) {
+        if ((inBanner[i]?.kind || classifyButton(text2)) === kind) {
           available = true;
           try {
             await item.click({ timeout: 1200 });
@@ -714,7 +758,7 @@ async function collect(browser, url, opts = {}) {
       bannerPresent = first.data._inspection.bannerPresent;
       tcf = first.data._inspection.tcf;
       consentMode.gcs.avant = first.data._inspection.gcs;
-      for (const name of first.data._inspection.cmpNames || []) if (!vendors.includes(name)) vendors.push(name);
+      for (const name of [first.data._inspection.vendor, ...first.data._inspection.cmpNames || []]) if (name && !vendors.includes(name)) vendors.push(name);
     }
     const insp = first.data?._inspection;
     if (insp && !insp.bannerPresent && (insp.nodeCount < 120 && insp.textLen < 500 || /un instant|just a moment|attention required|access denied|acc[èe]s refus|maintenance|v[ée]rification|verify|captcha|robot|forbidden|blocked|403/i.test(insp.pageTitle || ""))) {
@@ -724,7 +768,7 @@ async function collect(browser, url, opts = {}) {
     }
     const initial = first.data?._inspection.buttons || [];
     const publicButtons = [];
-    for (const b of initial) publicButtons.push({ text: b.text, kind: classifyButton(b.text), layer: 1, w: b.w, h: b.h, fontSize: b.fontSize, bg: b.bg, color: b.color });
+    for (const b of initial) publicButtons.push({ text: b.text, kind: b.kind || classifyButton(b.text), layer: 1, w: b.w, h: b.h, fontSize: b.fontSize, bg: b.bg, color: b.color });
     await page.close().catch(() => {
     });
     page = await makePage();
@@ -737,7 +781,7 @@ async function collect(browser, url, opts = {}) {
         const refusedInSettings = await clickChoice(page, "reject");
         reject = { layer: refusedInSettings.clicked ? 2 : null, kind: classifyRejectKind({ ...refusedInSettings, inSettings: true }), clicked: refusedInSettings.clicked, alternative: refusedInSettings.clicked ? "settings" : null };
         const second = await inspect(page, "refus couche 2", limits);
-        for (const b of second?.buttons || []) publicButtons.push({ text: b.text, kind: classifyButton(b.text), layer: 2, w: b.w, h: b.h, fontSize: b.fontSize, bg: b.bg, color: b.color });
+        for (const b of second?.buttons || []) publicButtons.push({ text: b.text, kind: b.kind || classifyButton(b.text), layer: 2, w: b.w, h: b.h, fontSize: b.fontSize, bg: b.bg, color: b.color });
       }
     }
     if (reject.clicked) {
