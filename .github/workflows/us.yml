@@ -1,13 +1,13 @@
 name: us
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 permissions:
   contents: read
   id-token: write
 concurrency:
-  group: us-runner
+  group: us-runner-${{ github.run_number % 2 }}
   cancel-in-progress: false
 jobs:
   run:
