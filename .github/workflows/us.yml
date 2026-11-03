@@ -3,16 +3,29 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      lanes:
+        description: 'Etude : voies en parallele, ex. [1,2,3,4,5,6,7,8] (vide = 1 voie)'
+        required: false
+        default: ''
+      minutes:
+        description: 'Etude : duree en minutes (vide = 28)'
+        required: false
+        default: ''
 permissions:
   contents: read
   id-token: write
-concurrency:
-  group: us-runner-${{ github.event_name }}
-  cancel-in-progress: false
 jobs:
   run:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(inputs.lanes || '[1]') }}
+    concurrency:
+      group: us-${{ inputs.lanes && 'etude' || github.event_name }}-${{ matrix.lane }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,4 +43,5 @@ jobs:
           FC_REGION: us
           FC_AUTH: oidc
           FC_BASE_URL: https://f-cookies.org
-        run: timeout 1800 node runner.mjs || true
+          RUN_MINUTES: ${{ inputs.minutes || '28' }}
+        run: timeout $((RUN_MINUTES * 60)) node runner.mjs || true
