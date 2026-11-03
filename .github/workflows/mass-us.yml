@@ -11,7 +11,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 355
     strategy:
       fail-fast: false
       matrix:
@@ -36,4 +36,4 @@ jobs:
           FC_REGION: us
           FC_AUTH: oidc
           FC_BASE_URL: https://f-cookies.org
-        run: timeout 1700 node runner.mjs || true
+        run: timeout 20400 node runner.mjs || true
